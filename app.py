@@ -183,36 +183,75 @@ def get_mleader_texts_from_layer(acad: Autocad, layer_name="_units"):
 
 
 def read_js():
-    file_path = filedialog.askopenfilename(
-        title="Select Excel File",
-        filetypes=[("Excel Files", "*.xlsx *.xls *.xlsm")],
-        initialdir= acad.doc.Path
-    )
-
-    if not file_path:
-        print("No file selected.")
-    else:
-        print(f"Selected file: {file_path}")
-        js = pd.read_excel(file_path)
-        return js
-
+    try:
+        file_path = filedialog.askopenfilename(
+            title="Select Excel File",
+            filetypes=[("Excel Files", "*.xlsx *.xls *.xlsm")],
+            initialdir= acad.doc.Path
+        )
+        if not file_path:
+            log("No file selected.")
+        else:
+            update_status(f"Selected file: {file_path}")
+            js = pd.read_excel(file_path)
+            return js
+    except Exception as e:
+        log(f"Error opening file dialog: {e}")
 
 def read_odn():
-    file_path = filedialog.askopenfilename(
-        title="Select Excel File",
-        filetypes=[("Excel Files", "*.xlsx *.xls *.xlsm")],
-        initialdir= acad.doc.Path
-    )
+    """  ODN ROW INDEX
+    0         1                 2            3         4                         5                            6                      7                                 
+    Sequence  Span Feet         Route/Lead   Terminal Terminal Type             Drop\nPorts                 Branch?\n(Y/N)          Terminal\nOutput                  ONT Level          RUS Unit     Vendor Part #                         Terminal Count\n(ZF)    Cable Count   Input Pwr   Thru Calc    Out Calc                 0                0         NaN
+    2         190               1097         @125          Pole                       4                            NaN                -17.282852                   -17.6383           USBM1X4 PLO-U-104-SCA-SCA                                    ZF314,1-4       WNDFL,72  -10.042852       0.035  -10.077852          0.032126             0.07         NaN
+    """
+     
+    try:
+        file_path = filedialog.askopenfilename(
+            title="Select Excel File",
+            filetypes=[("Excel Files", "*.xlsx *.xls *.xlsm")],
+            initialdir= acad.doc.Path
+        )
+        if not file_path:
+            log("No file selected.")
+        else:
+            odn_d={}
+            update_status(f"Selected file: {file_path}")
+            odn_sheets= pd.ExcelFile(file_path).sheet_names
+            odn_to_read = [i for i in odn_sheets if "Splitter" in i]
+            odn = pd.read_excel(file_path, sheet_name=odn_to_read)
+            for _, df in odn.items():
+                    for row in df.itertuples(index=False):
+                        if row[5] in [4, 8]: 
+                            odn_d[f"{row[2]}/{row[3]}"] = [row[7], row[5]]
+                            print(f"{row[2]}/{row[3]} - TOUT= {row[7]:.2f} - fusbm= 1x{row[5]}") 
+            
+            return odn_d
 
-    if not file_path:
-        print("No file selected.")
-    else:
-        print(f"Selected file: {file_path}")
-        odn_sheets= pd.ExcelFile(file_path).sheet_names
-        odn_to_read = [i for i in odn_sheets if "Splitter" in i]
-        odn = pd.read_excel(file_path, sheet_name=odn_to_read)
-        return odn
+    except Exception as e:
+        log(f"Error opening file dialog: {e}")
 
+    
+
+def input_ODN():
+    odn=read_odn()
+    global acad, glob_units, glob_terminals
+    ter_id_li=list(glob_terminals.keys())
+    for l_s in ter_id_li:
+        try:
+            t=glob_terminals[l_s]
+            t.Tout=f"{odn[l_s][0]:.2f}"
+            print(t.Tout)
+            if int(t.fusbm) != int(odn[l_s][1]):
+                log(f"Mismatch for Terminal {l_s}: Expected FUSBM=1x{t.fusbm}, ODN FUSBM=1x{odn[l_s][1]}")
+            else:
+                log(f"{str(t.le_st)} - IN={t.FDH},{t.In} - Tout={t.Tout} - fusbm=1x{t.fusbm}")
+            t.contents = re.sub("TERMINAL OUTPUT:([A-Za-z0-9\.\-\+]+)dBm", f"TERMINAL OUTPUT:{t.Tout}dBm", t.contents)
+            zoom_replace(glob_terminals[l_s].Id, t.contents) 
+        except KeyError:
+            log(f"Terminal ID {l_s} not found in ODN EXCEL.")
+            continue
+    log("---- Done ODN Updated ----")
+    return
 
 def check_js():
     global acad, glob_units, glob_terminals
@@ -225,24 +264,21 @@ def check_js():
         # lead=0, st=1, fiberin=2, fusbm=3, hh=4, zf=8, splitter=9
         try:
             t=glob_terminals[str(int(row[0]))+'/'+row[1]]
-            print(lindex, " - ", t.le_st)
+            log(f"{str(t.le_st)} - IN={t.FDH},{t.In} - ZF={t.Out}")
             if int(t.In) != int(row[2]):
-                print(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected In={t.In}, Found In={row[2]}")
+                log(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected In={t.In}, Found In={row[2]}")
             if int(t.fusbm) != int(row[3]):
-                print(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected FUSBM={t.fusbm}, Found FUSBM={row[3]}")
+                log(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected FUSBM={t.fusbm}, Found FUSBM={row[3]}")
             if t.Out != row[8]:
-                print(type(row[8]), type(t.Out))
-                print(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected Out={t.Out}, Found Out={row[8]}")
+                log(type(row[8]), type(t.Out))
+                log(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected Out={t.Out}, Found Out={row[8]}")
 
         except KeyError:
-            print(f"Terminal ID {row[0]}/{row[1]} not found in terminal data.", glob_terminals[ter_id_li[lindex-1]].le_st, " ?")
-            x= input("press y to fix, n to exit: ")
-            if x == "y":
-                zoom_to_handle(glob_terminals[ter_id_li[lindex-1]].Id)
-                # mleader.TextString = "Updated"
-            else:   
-                return
+            log(f"Terminal ID {row[0]}/{row[1]} not found in terminal data. {glob_terminals[ter_id_li[lindex-1]].le_st} ?")
+            zoom_to_handle(glob_terminals[ter_id_li[lindex-1]].Id)
+            # mleader.TextString = "Updated"
             continue
+    log("---- Done ----")
     return
 
 def input_zf():
@@ -269,6 +305,8 @@ def input_zf():
             continue
     log("---- Done ZF Updated ----")
     return
+
+
 def zoom_replace(handle, new_text):
     try:   
         dacad = win32com.client.Dispatch("AutoCAD.Application")
@@ -320,17 +358,15 @@ def rearrange_terminals(ter: list):
         
 # get data from cad file
 def Connect2CAD():
-    global acad, glob_units, glob_terminals
-    acad = Autocad()
-    glob_units, ter_li = get_mleader_texts_from_layer(acad, "_units")
-    glob_terminals=rearrange_terminals(ter_li)
-    update_status(f"Connected to AutoCAD: {acad.doc.Name} with {len(ter_li)} Terminals.")
-    log(f"--- {len(ter_li)} Terminals Found ---")
-    
-   
-def run_check_odn():
-    threading.Thread(target=read_odn, daemon=True).start()
-    
+    try:
+        global acad, glob_units, glob_terminals
+        acad = Autocad()
+        glob_units, ter_li = get_mleader_texts_from_layer(acad, "_units")
+        glob_terminals=rearrange_terminals(ter_li)
+        update_status(f"Connected to AutoCAD: {acad.doc.Name} with {len(ter_li)} Terminals.")
+        log(f"--- {len(ter_li)} Terminals Found ---")
+    except Exception as e:
+        log(f"Error connecting to AutoCAD: {e}")
 
 def update_status(text):
     status_var.set(text)
@@ -365,15 +401,18 @@ if __name__ == "__main__":
         btn_frame = ttk.Frame(root)
         btn_frame.pack(pady=15)
 
-        btn_job = ttk.Button(btn_frame, text="INPUT ZF", command=input_zf)
-        btn_job.grid(row=1, column=0, padx=10)
+        btn_zf = ttk.Button(btn_frame, text="INPUT ZF", command=input_zf)
+        btn_zf.grid(row=1, column=0, padx=10)
 
-        btn_odn = ttk.Button(btn_frame, text="Check ODN", command=run_check_odn)
-        btn_odn.grid(row=1, column=1, padx=10)
+        btn_job = ttk.Button(btn_frame, text="check Job Start", command=check_js)
+        btn_job.grid(row=1, column=1, padx=10)
+
+        btn_odn = ttk.Button(btn_frame, text="INPUT ODN", command=input_ODN)
+        btn_odn.grid(row=1, column=2, padx=10)
 
         btn_cad = ttk.Button(btn_frame, text="Connect TO CAD", command=Connect2CAD)
         btn_cad.grid(row=0, column=0, padx=10, pady=10)
-
+        root.grid_rowconfigure(0, weight=1)
         # Progress Bar
         progress = ttk.Progressbar(root, orient="horizontal", mode="determinate")
         progress.pack(fill="x", padx=20, pady=(10, 5))
