@@ -20,7 +20,7 @@ import re
 import json
 import pandas as pd
 import tkinter as tk
-from tkinter import Tk, filedialog, ttk
+from tkinter import Tk, filedialog, ttk, simpledialog
 import win32com.client
 import pythoncom
 import time
@@ -28,7 +28,7 @@ import threading
 from datetime import datetime
 
 class Terminals:
-    def __init__(self, MLHandle: str, L_S: str, FDH_Name: str, input_value: int, Terminaloutput: str, output: str, fusbm: int, units: str):
+    def __init__(self, MLHandle: str, L_S: str, FDH_Name: str, input_value: int, Terminaloutput: str, output: str, fusbm: int, units: str, content: str):
         self.Id = MLHandle
         self.le_st= L_S
         self.FDH = FDH_Name
@@ -37,6 +37,7 @@ class Terminals:
         self.fusbm = fusbm
         self.Tout = Terminaloutput
         self.units = units
+        self.contents = content
 
     def __str__(self):
         return f"Terminals(id={self.Id}- input={self.FDH},{self.In}- output={self.Out}- fusbm=1x{self.fusbm}- TERMINAL OUTPUT={self.Tout}- units={self.units})"
@@ -44,6 +45,7 @@ class Terminals:
 
 def parse_Terminal(handle, text):
     # Remove surrounding braces if present
+    og_con=text
     text = re.sub(r'{', '', text)
     text = re.sub(r'}', '', text)
 
@@ -56,7 +58,7 @@ def parse_Terminal(handle, text):
     # Split by \P (paragraphs/newlines)
     parts = re.split(r'\\P', text)
 
-    data = Terminals(handle, "", "", 0, "", "", 0, "")
+    data = Terminals(handle, "", "", 0, "", "", 0, "", og_con)
     identifier_set = False  # Track first non-empty line to store as Identifier
 
     for part in parts:
@@ -147,8 +149,10 @@ def parse_mleader_text(text):
 
 def get_mleader_texts_from_layer(acad: Autocad, layer_name="_units"):
     
-    
-    print(f"Connected to AutoCAD: {acad.doc.Name}")
+    log("--- EXTRACTING TERMINALS ---")
+    update_status(f"Connected to AutoCAD: {acad.doc.Name}")
+
+    # print(f"Connected to AutoCAD: {acad.doc.Name}")
     
     Units = []
     Terminal_list = []
@@ -164,14 +168,17 @@ def get_mleader_texts_from_layer(acad: Autocad, layer_name="_units"):
                 if '@' in text:
                     ter =parse_Terminal(entity.Handle, text)
                     Terminal_list.append(ter)
+                    # log(f"{str(ter.contents)}")
+                    log(f"{str(ter.le_st)} - IN={str(ter.FDH)},{str(ter.In)} - ZF={str(ter.Out)}")
                 else:
                     Units.append(parse_mleader_text(text))
                 # print(f"Found MLeader on {layer_name}: {text}")
         except Exception as e:
-            print(f"Error reading entity: {e}")
+            log(f"Error reading entity: {e}")
 
     if not Units and not Terminal_list:
-        print(f"No MLeaders found on layer '{layer_name}'.")
+        log(f"No MLeaders found on layer '{layer_name}'.")
+    log("--- DONE ---")
     return Units, Terminal_list
 
 
@@ -207,16 +214,17 @@ def read_odn():
         return odn
 
 
-def check_js(js: pd.DataFrame, ter: dict):
+def check_js():
+    global acad, glob_units, glob_terminals
     js=read_js()
-    ter_id_li=list(ter.keys())
+    ter_id_li=list(glob_terminals.keys())
     lindex=0
     for row in js.itertuples(index=False):
         lindex+=1
         #Pandas(Index=53, LEAD=1097, _2='@211', FIBER=8, PORTS=4, _5=3, _6=25, _7=28, _8=nan, ZF='ZF317,25-28', SPLTTER='2B6', SPARE='1-7', _12='HH', _13=20.0)
         # lead=0, st=1, fiberin=2, fusbm=3, hh=4, zf=8, splitter=9
         try:
-            t=ter[str(int(row[0]))+'/'+row[1]]
+            t=glob_terminals[str(int(row[0]))+'/'+row[1]]
             print(lindex, " - ", t.le_st)
             if int(t.In) != int(row[2]):
                 print(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected In={t.In}, Found In={row[2]}")
@@ -227,15 +235,51 @@ def check_js(js: pd.DataFrame, ter: dict):
                 print(f"Mismatch for Terminal {row[0]}/{row[1]}: Expected Out={t.Out}, Found Out={row[8]}")
 
         except KeyError:
-            print(f"Terminal ID {row[0]}/{row[1]} not found in terminal data.", ter[ter_id_li[lindex-1]].le_st, " ?")
+            print(f"Terminal ID {row[0]}/{row[1]} not found in terminal data.", glob_terminals[ter_id_li[lindex-1]].le_st, " ?")
             x= input("press y to fix, n to exit: ")
             if x == "y":
-                zoom_to_handle(ter[ter_id_li[lindex-1]].Id)
+                zoom_to_handle(glob_terminals[ter_id_li[lindex-1]].Id)
                 # mleader.TextString = "Updated"
             else:   
                 return
             continue
     return
+
+def input_zf():
+    global acad, glob_units, glob_terminals
+    js=read_js()
+    fdh=get_user_input("Enter FDH Name to process:", "FDH Name")
+    ter_id_li=list(glob_terminals.keys())
+    lindex=0
+    for row in js.itertuples(index=False):
+        lindex+=1
+        #Pandas(Index=53, LEAD=1097, _2='@211', FIBER=8, PORTS=4, _5=3, _6=25, _7=28, _8=nan, ZF='ZF317,25-28', SPLTTER='2B6', SPARE='1-7', _12='HH', _13=20.0)
+        # lead=0, st=1, fiberin=2, fusbm=3, hh=4, zf=8, splitter=9
+        try:
+            t=glob_terminals[str(int(row[0]))+'/'+row[1]]
+            t.contents = re.sub("N:([A-Z0-9]+,\d+|[A-Z]+,[A-Z0-9]+)", f"N:{fdh},{row[2]}", t.contents)
+            t.contents = re.sub("OUT:([A-Z0-9]+,[A-Z0-9\-]+)", f"OUT:{row[8]}".upper(), t.contents)
+            zoom_replace(glob_terminals[ter_id_li[lindex-1]].Id, t.contents)  
+            log(f"{str(t.le_st)} - IN={fdh},{row[2]} - ZF={row[8]}")
+            
+
+        except KeyError:
+            log(f"Terminal ID {row[0]}/{row[1]} not found in terminal data. {glob_terminals[ter_id_li[lindex-1]].le_st} ?")
+            zoom_to_handle(glob_terminals[ter_id_li[lindex-1]].Id)
+            continue
+    log("---- Done ZF Updated ----")
+    return
+def zoom_replace(handle, new_text):
+    try:   
+        dacad = win32com.client.Dispatch("AutoCAD.Application")
+        doc = dacad.ActiveDocument
+        obj = doc.HandleToObject(handle)
+        obj.TextString = new_text
+        min_point, max_point = obj.GetBoundingBox()
+        doc.SendCommand(f'_ZOOM W {min_point[0]},{min_point[1]} {max_point[0]},{max_point[1]} ')
+        doc.Regen(1)
+    except Exception:
+        log(f"Error updating MLeader: {obj.TextString}")
 
 
 def zoom_to_handle(handle):
@@ -276,20 +320,17 @@ def rearrange_terminals(ter: list):
         
 # get data from cad file
 def Connect2CAD():
+    global acad, glob_units, glob_terminals
     acad = Autocad()
-    units, ter_li = get_mleader_texts_from_layer(acad, "_units")
-    ter_map=rearrange_terminals(ter_li)
-    update_status(f"Connected to AutoCAD:{acad.doc.Name} with {len(ter_li)} Terminals.")
-    log("\n--- Summary of Extracted Terminals ---")
-
-def run_check_job():
-    threading.Thread(target=check_js, daemon=True).start()
+    glob_units, ter_li = get_mleader_texts_from_layer(acad, "_units")
+    glob_terminals=rearrange_terminals(ter_li)
+    update_status(f"Connected to AutoCAD: {acad.doc.Name} with {len(ter_li)} Terminals.")
+    log(f"--- {len(ter_li)} Terminals Found ---")
     
+   
 def run_check_odn():
     threading.Thread(target=read_odn, daemon=True).start()
     
-def run_connect():
-    threading.Thread(target=Connect2CAD, daemon=True).start()
 
 def update_status(text):
     status_var.set(text)
@@ -301,9 +342,20 @@ def log(message):
     log_text.insert("end", f"[{timestamp}] {message}\n")
     log_text.see("end")
     log_text.config(state="disabled")
+    log_frame.update_idletasks()
+
+def get_user_input(prompt="Enter value", title="Input Required"):
+    """Show a simple pop-up dialog and return the user input as a string."""
+    value = simpledialog.askstring(title, prompt)
+    return value.upper()
+
 
 if __name__ == "__main__":
     try:
+        #GLOBAL VARIABLES
+        glob_units = []
+        glob_terminals = {}
+        
         root = tk.Tk()
         root.title("AutoCAD Automation Tools")
         root.geometry("600x400")
@@ -313,13 +365,13 @@ if __name__ == "__main__":
         btn_frame = ttk.Frame(root)
         btn_frame.pack(pady=15)
 
-        btn_job = ttk.Button(btn_frame, text="Check Job Start", command=run_check_job)
+        btn_job = ttk.Button(btn_frame, text="INPUT ZF", command=input_zf)
         btn_job.grid(row=1, column=0, padx=10)
 
         btn_odn = ttk.Button(btn_frame, text="Check ODN", command=run_check_odn)
         btn_odn.grid(row=1, column=1, padx=10)
 
-        btn_cad = ttk.Button(btn_frame, text="Check ODN", command=run_connect)
+        btn_cad = ttk.Button(btn_frame, text="Connect TO CAD", command=Connect2CAD)
         btn_cad.grid(row=0, column=0, padx=10, pady=10)
 
         # Progress Bar
@@ -344,3 +396,4 @@ if __name__ == "__main__":
         
     except Exception as e:
         print(f"open a cad file first or error: {e}")
+
