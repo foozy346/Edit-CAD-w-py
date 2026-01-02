@@ -296,7 +296,7 @@ def input_zf():
         #Pandas(Index=53, LEAD=1097, _2='@211', FIBER=8, PORTS=4, _5=3, _6=25, _7=28, _8=nan, ZF='ZF317,25-28', SPLTTER='2B6', SPARE='1-7', _12='HH', _13=20.0)
         # lead=0, st=1, fiberin=2, fusbm=3, hh=4, zf=8, splitter=9
         try:
-            t=glob_terminals[str(row[0])+'/'+row[1]]
+            t=glob_terminals[str(row[0])+'/'+str(row[1])]
             t.contents = re.sub("N:([A-Z0-9]+,\d+|[A-Z]+,[A-Z0-9]+)", f"N:{fdh},{int(row[2])}", t.contents)
             t.contents = re.sub("OUT:([A-Z0-9]+,[A-Z0-9\-]+)", f"OUT:{row[8]}".upper(), t.contents)
             zoom_replace(glob_terminals[ter_id_li[lindex-1]].Id, t.contents)  
