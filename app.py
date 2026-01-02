@@ -297,7 +297,7 @@ def input_zf():
         # lead=0, st=1, fiberin=2, fusbm=3, hh=4, zf=8, splitter=9
         try:
             t=glob_terminals[str(row[0])+'/'+row[1]]
-            t.contents = re.sub("N:([A-Z0-9]+,\d+|[A-Z]+,[A-Z0-9]+)", f"N:{fdh},{row[2]}", t.contents)
+            t.contents = re.sub("N:([A-Z0-9]+,\d+|[A-Z]+,[A-Z0-9]+)", f"N:{fdh},{int(row[2])}", t.contents)
             t.contents = re.sub("OUT:([A-Z0-9]+,[A-Z0-9\-]+)", f"OUT:{row[8]}".upper(), t.contents)
             zoom_replace(glob_terminals[ter_id_li[lindex-1]].Id, t.contents)  
             log(f"{str(t.le_st)} - IN={fdh},{row[2]} - ZF={row[8]}")
